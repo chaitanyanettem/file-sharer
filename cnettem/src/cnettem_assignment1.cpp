@@ -20,9 +20,6 @@
  *
  * This contains the main function. Add further description here....
  */
-#include <iostream>
-#include <cstdlib>
-
 #include "../include/global.h"
 
 /**
@@ -32,11 +29,6 @@
  * @param  argv The argument list
  * @return 0 EXIT_SUCCESS
  */
-
-void creator();
-void myport();
-void myip();
-void help();
 
 
 int main(int argc, char **argv)
@@ -58,7 +50,8 @@ void myip() {
 }
 
 void myport() {
-
+	//TO-DO: save port number somewhere and show it here.
+	std::cout<<"This isn't the port number you are looking for.";
 }
 
 void help(int server_or_client) {
@@ -75,4 +68,3 @@ void help(int server_or_client) {
 			std::cout<<"CREATOR";
 	}
 }
-
