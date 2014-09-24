@@ -184,6 +184,73 @@ void server_operations::recv_requests_server(int clientfd){
 
 }
 
+//returns the ip address of the host machine
+//copied most of the code from here http://jhshi.me/2013/11/02/how-to-get-hosts-ip-address/
+char * server_operations::my_ip (char *ip_addr){
+	char ip[256];
+
+	//DNS server
+	char target_name[8] = "8.8.8.8";
+	// DNS port
+	char target_port[3] = "53";
+	char port[20];
+	strcpy(ip_addr,"error");
+	/* get peer server */
+	struct addrinfo hints;
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+
+	struct addrinfo* info;
+	int ret = 0;
+	if ((ret = getaddrinfo(target_name, target_port, &hints, &info)) != 0) {
+		printf("[ERROR]: getaddrinfo error: %s\n", gai_strerror(ret));
+		return ip_addr;
+	}
+
+	if (info->ai_family == AF_INET6) {
+		printf("[ERROR]: do not support IPv6 yet.\n");
+		return ip_addr;
+	}
+
+	/* create socket */
+	int sock = socket(info->ai_family, info->ai_socktype, info->ai_protocol);
+	if (sock <= 0) {
+		perror("socket");
+		return ip_addr;
+	}
+
+	/* connect to server */
+	if (connect(sock, info->ai_addr, info->ai_addrlen) < 0) {
+		perror("connect");
+		close(sock);
+		return ip_addr;
+	}
+
+	/* get local socket info */
+	struct sockaddr_storage local_addr;
+	socklen_t addr_len = sizeof(local_addr);
+	if (getsockname(sock, (struct sockaddr*)&local_addr, &addr_len) < 0) {
+		perror("getsockname");
+		close(sock);
+		return ip_addr;
+	}
+
+	/* get peer ip addr */
+	if (local_addr.ss_family == AF_INET) {
+		struct sockaddr_in *s = (struct sockaddr_in *)&local_addr;
+
+		inet_ntop(AF_INET, &s->sin_addr, ip, sizeof ip);
+	} else { // AF_INET6
+		struct sockaddr_in6 *s = (struct sockaddr_in6 *)&local_addr;
+
+		inet_ntop(AF_INET6, &s->sin6_addr, ip, sizeof ip);
+	}
+	strcpy(ip_addr,ip);
+
+	return ip_addr;
+}
+
 //Makes entry of given socket to event fd.
 //After this entry events on his socket will be notified and thus can be handled.
 void server_operations::make_entry_to_epoll(int sfd, int eventid){
@@ -308,4 +375,3 @@ void inline server_operations::wait_for_event(int eventfd, struct epoll_event* e
 		}
 	}
 }
-
