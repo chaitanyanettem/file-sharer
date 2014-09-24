@@ -1,1 +1,0 @@
-#include "../include/global.h"
