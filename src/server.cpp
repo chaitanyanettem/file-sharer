@@ -184,4 +184,128 @@ void server_operations::recv_requests_server(int clientfd){
 
 }
 
+//Makes entry of given socket to event fd.
+//After this entry events on his socket will be notified and thus can be handled.
+void server_operations::make_entry_to_epoll(int sfd, int eventid){
+	int s;
+	struct epoll_event event;
+	event.data.fd = sfd;
+	event.events = EPOLLIN;
+	s = epoll_ctl (eventid, EPOLL_CTL_ADD, sfd, &event);
+	if (s == -1)
+	{
+		perror ("epoll_ctl");
+		abort ();
+	}
+	/* Buffer where events are returned */
+}
+
+/*Epoll waiting loop
+ *
+ *
+ * Referred to https://banu.com/blog/2/how-to-use-epoll-a-complete-example-in-c/
+ * on how to use Epoll and have copied part of the code from this tutorial
+ */
+void inline server_operations::wait_for_event(int eventfd, struct epoll_event* event_array,int sfd){
+	while (1)
+	{
+		char buf[MAXMSGSIZE];
+		int n, i;
+		int infd;
+		//epoll wait until no event
+		n = epoll_wait (eventfd, event_array, maxPeers, -1);
+		for (i = 0; i < n; i++)
+		{
+			if(event_array[i].events & EPOLLRDHUP){
+
+				//This flag means remote has closed the connection.
+
+				//This flag EPOLLRDHUP is supported at highgate but not at other servers so had to handle closing of connections at multiple places.
+				strcpy(buf,remove_from_peer_list(event_array[i].data.fd, buf));
+				fprintf(stderr,"\n%s closed the connection.\n",buf);
+				close (event_array[i].data.fd);
+
+				send_peer_list();
+
+				continue;
+
+			}
+			else if ((event_array[i].events & EPOLLERR) || (event_array[i].events & EPOLLHUP) || (!(event_array[i].events & EPOLLIN)))
+			{
+				/* An error has occured on this fd, or the socket is not
+		                 ready for reading (why were we notified then?) */
+				strcpy(buf,remove_from_peer_list(event_array[i].data.fd, buf));
+				fprintf(stderr,"\n%s closed the connection.\n",buf);
+				close (event_array[i].data.fd);
+
+				send_peer_list();
+
+				continue;
+			}
+			else if (sfd == event_array[i].data.fd)
+				//means event on our own server socket for incoming connections
+
+				while (1)
+				{
+					struct sockaddr_in in_addr;
+					socklen_t in_len;
+
+					//used for error checking
+					int s;
+
+					//fd returned from accept
+					int infd;
+
+					//Used to get data from getnameinfo
+					char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
+
+					in_len = sizeof in_addr;
+					infd = accept (sfd, (struct sockaddr *)&in_addr, &in_len);
+					if (infd == -1)
+					{
+						if ((errno == EAGAIN) ||
+								(errno == EWOULDBLOCK))
+						{
+							/* We have processed all incoming
+				                             connections. */
+							break;
+						}
+						else
+						{
+							perror ("accept");
+							break;
+						}
+					}
+
+					s=getnameinfo((struct sockaddr *)&in_addr, sizeof in_addr, hbuf, sizeof hbuf, sbuf, sizeof sbuf, 0);
+					if (s == 0)
+					{
+						printf("Accepted connection on descriptor %d "
+								"(host=%s, port=%s)\n", infd, hbuf, sbuf);
+					}
+					//make this socket non blocking
+					make_socket_non_blocking(infd);
+					//make this socket's entry to epoll
+					make_entry_to_epoll(infd,eventfd);
+				}
+
+
+			else if (event_array[i].data.fd==0){
+				//this means data to be read on stdin
+				recv_stdin_client(eventfd);
+
+			}
+
+			else
+			{
+				/* We have data on the fd waiting to be read.
+				 * May be peer's sending their requests to connect?
+				 */
+
+				recv_requests_server(event_array[i].data.fd);
+
+			}
+		}
+	}
+}
 
