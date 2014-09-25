@@ -375,3 +375,55 @@ void inline server_operations::wait_for_event(int eventfd, struct epoll_event* e
 		}
 	}
 }
+
+//used to reap the dead processes
+//copied from http://beej.us/guide/bgnet/output/html/multipage/clientserver.html
+
+void sigchld_handler(int s) {
+	while(waitpid(-1, NULL, WNOHANG) > 0);
+}
+
+//makes the socket non blocking
+void server_operations::make_socket_non_blocking (int sfd)
+{
+	int flags, s;
+
+	flags = fcntl (sfd, F_GETFL, 0);
+	if (flags == -1)
+	{
+		perror ("fcntl");
+
+	}
+
+	flags |= O_NONBLOCK;
+	s = fcntl (sfd, F_SETFL, flags);
+	if (s == -1)
+	{
+		perror ("fcntl");
+	}
+}
+
+//makes the socket back to blocking mode
+//while sending a large file send functions gives an error send: resource not available may be due to congestion over the network
+//So, in that case it makes sense make the socket blocking until everything is sent.
+void server_operations::make_socket_blocking (int sfd)
+{
+	int flags, s;
+
+	flags = fcntl (sfd, F_GETFL, 0);
+	if (flags == -1)
+	{
+		perror ("fcntl");
+
+	}
+
+	flags &= (~O_NONBLOCK);
+	if(flags & O_NONBLOCK){
+		std::cout<<"blocking failed";
+	}
+	s = fcntl (sfd, F_SETFL, flags);
+	if (s == -1)
+	{
+		perror ("fcntl");
+	}
+}
