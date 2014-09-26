@@ -383,6 +383,32 @@ void sigchld_handler(int s) {
 	while(waitpid(-1, NULL, WNOHANG) > 0);
 }
 
+//sendall function copied from beej.us to avoid partial sends.
+int server_operations::sendall(int s, unsigned char *buf, int len)
+{
+	int total = 0;        // how many bytes we've sent
+	int bytesleft = len; // how many we have left to send
+	int n;
+
+	while(total < len) {
+		n = send(s, buf+total, bytesleft, 0);
+		if (n == -1) {
+
+			if (errno == EBADF || ECONNRESET || EDESTADDRREQ || ENOTCONN || ENOTSOCK || EPIPE){
+				break;
+			}
+		}
+		if(n>0){
+			total += n;
+			bytesleft -= n;
+		}
+	}
+
+	len = total; // return number actually sent here
+
+	return n==-1?-1:0; // return -1 on failure, 0 on success
+}
+
 //makes the socket non blocking
 void server_operations::make_socket_non_blocking (int sfd)
 {
