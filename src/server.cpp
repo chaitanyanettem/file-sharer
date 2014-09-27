@@ -453,3 +453,210 @@ void server_operations::make_socket_blocking (int sfd)
 		perror ("fcntl");
 	}
 }
+
+//Convert str to Uppercase
+void  server_operations ::toupper(char *str){
+	int i=0;
+	while(str[i]!='\0'){
+		str[i]=std::toupper(str[i]);
+		i++;
+	}
+}
+
+//handle commnads at stdin
+void inline server_operations ::recv_stdin_client(int eventfd){
+
+	ssize_t count;
+	char buf[MAXMSGSIZE];
+
+	//Used to put split token form the request.
+	char token_arr[MAXMSGSIZE];
+	char *token=token_arr;
+
+//read from stdin
+	count= read (0,buf,sizeof buf);
+
+	if (count == -1)
+	{
+		/* If errno == EAGAIN, that means we have read all
+			                         data. So go back to the main loop. */
+		if (errno != EAGAIN)
+		{
+			perror ("read");
+
+		}
+
+	}
+
+	else{
+		if(buf!=NULL){
+
+			token=strtok(buf," \r\n");
+			if(token!=NULL){
+
+				//convert to uppercase
+				server_operations::toupper(token);
+
+
+				if (!strcmp(token,"HELP")){
+					//Display help menu
+					std::cout<<"Command Help--"<<std::endl;
+					std::cout<<"Help"<<std::setw(10)<<"Displays this help"<<std::endl;
+					std::cout<<"MYIP"<<std::setw(10)<<"Display the IP address of this process."<<std::endl;
+					std::cout<<"MYPORT"<<std::setw(10)<<"MYPORT Display the port on which this process is listening for incoming connections."<<std::endl;
+					std::cout<<"EXIT"<<std::setw(10)<<"Exit the process"<<std::endl;
+					std::cout<<"CREATOR"<<std::setw(10)<<"Display creator's name and relevant info."<<std::endl;
+
+				}
+				else if (!strcmp(token,"MYIP")){
+					//Print myip
+					strcpy(buf,my_ip(buf));
+					if(strcmp(buf,"error")){
+						fprintf(stderr, "MY IP is %s\n",buf);
+					}
+					else{
+						fprintf(stderr, "Error occurred while retrieving IP\n");
+
+					}
+					return;
+				}
+
+				else if (!strcmp(token,"MYPORT")){
+					//print myport
+					fprintf(stderr, "MY listening port is %s\n",server_port);
+
+				}
+				else if(!strcmp(token,"EXIT")){
+					//exit
+					std::cout<<"The Server is exiting.."<<std::endl;
+					exit(0);
+				}
+
+				else{
+
+					fprintf(stderr,"Invalid command use help for command help\n");
+
+				}
+			}
+		}
+	}
+}
+
+//Listen to requests function called in main function
+//copied socket programming part from http://beej.us/guide/bgnet/output/html/multipage/clientserver.html
+
+void server_operations::listen_to_requests(int sfd){
+
+	//epoll eventfd
+	int eventfd;
+
+	int infd;
+
+	//Epoll event
+	struct epoll_event event;
+	struct epoll_event* event_array =new epoll_event[maxPeers] ;
+
+	struct sockaddr_storage in_addr;
+	struct sigaction sa;
+	if (listen(sfd, BACKLOG) == -1) {
+		perror("listen");
+		exit(1);
+	}
+
+	// reap all dead processes
+	sa.sa_handler = sigchld_handler;
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART;
+	if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+		perror("sigaction");
+		exit(1);
+	}
+
+	//create the epoll event handler
+	eventfd = epoll_create (maxPeers);
+	if (eventfd == -1)
+	{
+		perror ("epoll_create");
+		abort ();
+	}
+
+	//make entry of stdin to events
+	make_entry_to_epoll(0,eventfd);
+
+	//make entry of own socket on event handler
+	make_entry_to_epoll(sfd,eventfd);
+	printf("server: waiting for connections...\n");
+
+	//wait for event
+	wait_for_event(eventfd,event_array,sfd);
+
+	delete event_array;
+
+	close (sfd);
+}
+
+
+// get sockaddr, IPv4 or IPv6:
+void * server_operations::get_in_addr(struct sockaddr *sa)
+{
+	if (sa->sa_family == AF_INET) {
+		return &(((struct sockaddr_in*)sa)->sin_addr);
+	}
+
+	return &(((struct sockaddr_in6*)sa)->sin6_addr);
+}
+
+//setup server at given port
+//copied from http://beej.us/guide/bgnet/output/html/multipage/clientserver.html
+int server_operations::server_setup(const char* port)
+{
+	int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
+	struct addrinfo hints, *servinfo, *p;
+	struct sockaddr_storage their_addr; // connector's address information
+	socklen_t sin_size;
+	struct sigaction sa;
+	int yes=1;
+	char s[INET6_ADDRSTRLEN];
+	int rv;
+
+	memset(&hints, 0, sizeof hints);
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE; // use my IP
+
+	if ((rv = getaddrinfo(NULL,port, &hints, &servinfo)) != 0) {
+		fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
+		return 1;
+	}
+
+	// loop through all the results and bind to the first we can
+	for(p = servinfo; p != NULL; p = p->ai_next) {
+		if ((sockfd = socket(p->ai_family, p->ai_socktype,
+				p->ai_protocol)) == -1) {
+			perror("server: socket");
+			continue;
+		}
+
+		if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes,
+				sizeof(int)) == -1) {
+			perror("setsockopt");
+			exit(1);
+		}
+
+		if (bind(sockfd, p->ai_addr, p->ai_addrlen) == -1) {
+			close(sockfd);
+			perror("server: bind");
+			continue;
+		}
+
+		break;
+	}
+
+	if (p == NULL)  {
+		fprintf(stderr, "server: failed to bind\n");
+		return -1;
+	}
+
+	freeaddrinfo(servinfo); // all done with this structure
+	return sockfd;
+}
