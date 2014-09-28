@@ -348,3 +348,120 @@ void client_operations:: split_return(const char* str, char c, char *token){
 	}
 	token[j]='\0';
 }
+
+//send the file over socket
+void client_operations::send_file_over_socket(int clientfd,const char* filename){
+
+	//cont of the bytes sent etc. from return values of fread, send etc.
+	int count;
+	//data buffer
+	unsigned char data_buffer[PACKET_SIZE];
+	//count the total bytes sent
+	int total=0;
+	//count of header length
+	int header_count=0;
+	//file_size
+	size_t file_size;
+	struct stat filestatus;							//http://www.cplusplus.com/forum/unices/3386/
+	stat( filename, &filestatus );
+	file_size=filestatus.st_size;
+	char file_head[initial_header_len]="File";
+	//find time spent in upload
+	struct timespec tstart={0,0}, tend={0,0};		//http://stackoverflow.com/questions/16275444/c-how-to-print-time-difference-in-accuracy-of-milliseconds-and-nanoseconds
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
+
+
+	//File pointer open in binary mode.
+	FILE* File=fopen(filename,"rb");
+
+	if (!File) {
+		//If file is not present then let the other side know by sending file size=-1
+		perror ("Error opening file");
+
+		//header to be sent to the receiver
+		sprintf((char *)data_buffer,"File %s %d \r",filename,-1);
+		data_buffer[PACKET_SIZE-1]='\0';
+
+		count=sendall(clientfd,data_buffer,sizeof(data_buffer));
+
+		if(count!=0){
+			perror ("send");
+			close(clientfd);
+		}
+		return;
+	}
+
+	fprintf(stderr,"\nSending file now...\n");
+
+	//while sending it is useful to make socket blocking as it will block until it is possible to send
+	make_socket_blocking(clientfd);
+
+	//First packet has header "File"
+
+	while(total<filestatus.st_size){
+
+		//find length of header
+
+		if(filestatus.st_size-(total) > PACKET_SIZE-header_count-1 && total!=0){
+			//	filestatus.st_size-total is the data remaining to be sent,
+			// Remaining data > space in data packet, then this is an intermediate packet and not last packet.
+
+			strcpy(file_head,"Pfil");
+		}
+		else if(filestatus.st_size-(total) <= PACKET_SIZE-header_count-1){
+			//this is the last packet let the receiver know
+			strcpy(file_head,"Endf");
+		}
+
+		//create file header appropriately
+		sprintf((char *)data_buffer,"%4s %s %d \r",file_head,filename,(int) file_size);
+		header_count=strlen((char *)data_buffer);
+		//read in data in the buffer of quantity PACKET_SIZE-header_count-1, make space for \0
+		count=fread (data_buffer+header_count , 1, PACKET_SIZE-header_count-1,File);
+		total+=count;
+		data_buffer[count+header_count]='\0';
+
+		//send the data
+		count=sendall(clientfd,data_buffer,count+header_count+1);
+
+		if(count!=0){
+			perror ("send");
+			close(clientfd);
+			return;
+		}
+
+	}
+
+	//find end time
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+
+	//find time difference
+	double time=((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec);
+
+	//find file size in bits
+	file_size=8*filestatus.st_size;
+	fprintf(stderr,"\nFile %s sent successfully...\n",filename);
+
+	//speed in bps
+	double speed=(double) file_size/time;
+
+	if (speed< 1024)
+	{
+		//speed in bps
+		fprintf(stderr,"\nThe file uploaded at rate of %.2fbits per second...\n",speed);
+	}
+	else if (speed < 1048000)
+	{
+		//speed in Kbps
+		speed= (double)speed/1024;
+		fprintf(stderr,"\nThe file uploaded at rate of %.2fKbps...\n",speed);
+	}
+	else {
+		//speed in Mbps
+		speed= (double)speed/(1024*1024);
+		fprintf(stderr,"\nThe file uploaded at rate of %.2fMbps...\n",speed);
+	}
+
+	fclose(File);
+	make_socket_non_blocking(clientfd);
+}
