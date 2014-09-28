@@ -584,3 +584,491 @@ void client_operations::recv_and_write_file(int clientfd, unsigned char* rem_buf
 		return;
 	}
 }
+
+//Requests from peers processed in this function
+//some part is copied form http://beej.us/guide/bgnet/output/html/multipage/clientserver.html
+//and https://banu.com/blog/2/how-to-use-epoll-a-complete-example-in-c/
+void client_operations::recv_requests_client(int clientfd){
+	//token from buf
+	char split_token[MAXMSGSIZE];
+	int done = 0;
+
+	ssize_t count;
+	unsigned char buf[MAXMSGSIZE];
+
+	//token array used for holding part of token
+	char token_arr[MAXMSGSIZE];
+	char* token=&token_arr[0];
+
+	//read first 5 charcters to determine which type of packet is this
+	count = recv (clientfd, buf, 5, 0);
+	buf[count-1]='\0';
+	if (count == -1)
+	{
+		/* If errno == EAGAIN, that means we have read all
+				                         data. So go back to the main loop. */
+		if (errno != EAGAIN)
+		{
+			perror ("read");
+
+		}
+
+	}
+	else if (count == 0)
+	{
+		/* End of file. The remote has closed the
+				                         connection. */
+		//remove the clientfd from connected_list
+		strcpy((char *)buf,remove_from_connected_list(clientfd, (char *)buf));
+		fprintf(stderr,"\n%s closed the connection.\n",buf);
+		close(clientfd);
+
+	}
+	else{
+
+		if(buf){
+
+			if (!strcmp((char *)buf,"Peer")){
+				//peer list shared by the server
+				char host_arr[MAXMSGSIZE];
+				char ipstr[MAXMSGSIZE];
+				char port[20];
+
+				char *host=&host_arr[0];
+
+				//receive remaining message
+				count = recv (clientfd, buf, MAXMSGSIZE-5, 0);
+
+				//token contains whole info for a given peer
+				strcpy(token,strtok((char *)buf,"\n"));
+				//host contains hostname of the peer
+				host=strtok(token,"|");
+
+				//reset peer_idx to zero.
+				peer_idx=0;
+
+				while(host!=NULL){
+					//ip address
+					strcpy(ipstr,strtok(NULL,"|"));
+					strcpy(port,strtok(NULL,"|\n"));
+
+					// put in peer_list all the info about the peer
+
+					strcpy(peer_list.at(peer_idx).ipstr,ipstr);
+					peer_list.at(peer_idx).port=new char[strlen(port)];
+					strcpy(peer_list.at(peer_idx).port,port);
+					peer_list.at(peer_idx).hostname=new char[strlen(host)];
+					strcpy(peer_list.at(peer_idx).hostname,host);
+					peer_list.at(peer_idx).file_descriptor=-1;
+					peer_idx++;
+					host=strtok(NULL,"|\n");
+				}
+			}
+
+			else if (!strcmp((char *)buf,"File") || !strcmp((char *)buf,"Pfil") || !strcmp((char *)buf,"Endf")){
+				//File packet received from the peer
+				recv_and_write_file(clientfd,buf);
+			}
+
+			else if (!strcmp((char *)buf,"Send")){
+				//Send command means other peer asking this peer to send a certain file, send command  may be triggered by download command on other peer
+
+				count = recv (clientfd, buf, MAXMSGSIZE-5, 0);
+
+				//file name of the file
+				strcpy(split_token,strtok((char *)buf,"\n"));
+
+				//send file to the peer
+				send_file_over_socket(clientfd,split_token);
+			}
+
+			else {
+				fprintf(stderr,"The server does not recognize %s command\n",token);
+
+			}
+		}
+	}
+
+}
+
+
+//handle commands from the terminal
+void inline client_operations::recv_stdin_client(int eventfd){
+	//clientfd that may be will be retried in case of some commands
+	int clientfd;
+
+	//count returned by read etc.
+	ssize_t count;
+
+	//buf to receive data in
+	char buf[MAXMSGSIZE];
+
+	//send cmd buffer
+	char send_cmd[MAXMSGSIZE];
+
+	//capture first argument in this array
+	char firstarg_arr[MAXMSGSIZE];
+	//capture second argument in this array
+	char secondarg_arr[MAXMSGSIZE];
+
+	//using this pointer to point to the arrays in case strtok returns null.
+	char *firstarg=firstarg_arr;
+	char *secondarg=secondarg_arr;
+
+	char token_arr[MAXMSGSIZE];
+	char *token=token_arr;
+
+	errno=0;
+
+
+	count= read (0,buf,sizeof buf);
+
+	if (count == -1)
+	{
+		/* If errno == EAGAIN, that means we have read all
+			                         data. So go back to the main loop. */
+		if (errno != EAGAIN)
+		{
+			perror ("read");
+
+		}
+
+	}
+	else{
+		if(buf!=NULL){
+			//if buf not null
+			token=strtok(buf," \r\n");
+			//if token not null
+			if(token!=NULL){
+
+				//convert to uppercase
+				server_operations::toupper(token);
+				firstarg=strtok(NULL," \r\n");
+				secondarg=strtok(NULL," \r\n");
+
+				if (!strcmp(token,"HELP")){
+					//help menu
+					std::cout<<"Command Help"<<std::endl;
+					std::cout<<"Help"<<std::setw(10)<<"Displays this help"<<std::endl;
+
+					std::cout<<"MYIP"<<std::setw(10)<<"Display the IP address of this process."<<std::endl;
+					std::cout<<"MYPORT"<<std::setw(10)<<"MYPORT Display the port on which this process is listening for incoming connections."<<std::endl;
+					std::cout<<"REGISTER <server IP> <port_no>"<<std::setw(10)<<"Register the client to the server at timberlake at port_no ."<<std::endl;
+					std::cout<<"CONNECT <destination> <port no>"<<std::setw(10)<<"Connect to the destination at port_no ."<<std::endl;
+					std::cout<<"LIST"<<std::setw(10)<<"LIST all the available peers of the connection"<<std::endl;
+					std::cout<<"TERMINATE <connection id>"<<std::setw(10)<<"Terminate the connection "<<std::endl;
+					std::cout<<"EXIT"<<std::setw(10)<<"Exit the process"<<std::endl;
+					std::cout<<"UPLOAD <connection id> <file name>"<<std::setw(10)<<"Upload file file_name to peer"<<std::endl;
+					std::cout<<"DOWNLOAD <connection id 1> <file1>"<<std::setw(10)<<"Download file file_name from peer"<<std::endl;
+					std::cout<<"CREATOR"<<std::setw(10)<<"Display creator's name and relevant info."<<std::endl;
+				}
+
+				else if (!strcmp(token,"REGISTER")){
+					//Register to server
+
+					if(firstarg!=NULL){
+						//Register to server at the port specified by firstarg
+
+						//connect to server
+						int server_sock=connect_to_port(default_server,firstarg);
+						if (server_sock>2){
+
+							strcpy(send_cmd,"REGISTER ");
+							strcat(send_cmd,server_port);
+							strcat(send_cmd,"\n");
+
+							//make socket non blocking
+							make_socket_non_blocking(server_sock);
+							make_entry_to_epoll(server_sock,eventfd);
+
+							//send server request to register this peer
+							count=sendall(server_sock,(unsigned char *)send_cmd,sizeof send_cmd);
+							if(count!=0){
+								perror ("send");
+							}
+
+						}
+
+					}
+					else{
+						//error handling
+						fprintf(stderr,"Invalid command; use help for command help\n");
+					}
+					return;
+				}
+
+				else if (!strcmp(token,"MYPORT")){
+					//myport
+					fprintf(stderr, "MY listening port is %s\n",server_port);
+
+				}
+				else if (!strcmp(token,"MYIP")){
+					//myip
+					strcpy(buf,my_ip(buf));
+					if(strcmp(buf,"error")){
+						fprintf(stderr, "MY IP is %s\n",buf);
+					}
+					else{
+						//error handling
+						fprintf(stderr, "Error occurred while retrieving IP\n");
+
+					}
+					return;
+				}
+				else if (!strcmp(token,"UPLOAD")){
+					//upload command
+					if (firstarg !=NULL && secondarg!=NULL){
+
+						char *endptr;
+
+						//convert firstarg to integer
+						int connection_id = strtol(firstarg, &endptr, 10);									//taken this from man page of strtol
+						if ((errno == ERANGE && (connection_id == INT_MAX || connection_id == INT_MIN))
+								|| (errno != 0 && connection_id == 0)) {
+							perror("strtol");
+
+						}
+
+						if (endptr == firstarg) {
+							//error handling
+							fprintf(stderr, "No digits were found\n");
+							fprintf(stderr,"Invalid command use help for command help\n");
+
+						}
+						else{
+							//make sure connection_id is valid
+							if(connection_id<=connected_list_idx && connection_id!=1){
+								clientfd=connected_list.at(connection_id-1).file_descriptor;
+							}
+							else{
+								fprintf(stderr,"The connection id specified by you either does not exist or trying to download from server\n");
+								return;
+							}
+							//send file to the peer
+							send_file_over_socket(clientfd,secondarg);
+						}
+					}
+
+					else{
+						//error handling
+						fprintf(stderr,"Invalid command use help for command help\n");
+					}
+					return;
+				}
+
+				else if (!strcmp(token,"DOWNLOAD")){
+					//download command
+
+					char *filename;
+
+					if (firstarg !=NULL && secondarg!=NULL){
+						redo_loop:		char *endptr;
+
+						//convert firstarg to integer
+						int connection_id = strtol(firstarg, &endptr, 10);
+						if ((errno == ERANGE && (connection_id == INT_MAX || connection_id == INT_MIN))
+								|| (errno != 0 && connection_id == 0)) {
+							perror("strtol");
+
+						}
+						if (endptr == firstarg) {
+							fprintf(stderr, "No digits were found\n");
+							fprintf(stderr,"Invalid command use help for command help\n");
+
+						}
+
+						//get filename from secondarg
+						filename=secondarg;
+
+
+						if(connection_id<=connected_list_idx && connection_id!=1){
+							//send request for file
+							strcpy(send_cmd,"Send ");
+							strcat(send_cmd,filename);
+							strcat(send_cmd,"\n");
+
+							//get the file desc. from the connection_id
+							clientfd=connected_list.at(connection_id-1).file_descriptor;
+							if(!is_download_on(clientfd)){
+								//make sure no download with this peer is in progress
+
+								send_download_command(clientfd,send_cmd);
+
+							}
+							else{
+								//if download is in progress simply add the request to buffer and process later in recv_file function
+								std::string str(send_cmd);
+								send_cmd_buffer.push_back(str);
+
+							}
+
+							firstarg=strtok(NULL," \r\n");
+							secondarg=strtok(NULL," \r\n");
+							//see if any other download request is present
+							if (firstarg !=NULL && secondarg!=NULL){
+								goto redo_loop;
+							}
+
+						}
+						else{
+							//error handling
+							fprintf(stderr,"The connection id specified by you either does not exist or trying to download from server\n");
+							return;
+						}
+
+					}
+					else{
+						//error handling
+						fprintf(stderr,"Invalid command use help for command help\n");
+
+
+					}
+					return;
+				}
+				else if (!strcmp(token,"CONNECT")){
+					if(firstarg!=NULL && secondarg!=NULL){
+
+						//connect to peer
+
+						if(connected_list_idx==4){
+							//Max limit for peers reached
+							std::cout<<"\nReached limit of maximum connections terminate some connections first to add a new connection\n";
+							return;
+						}
+						if (is_valid_peer(firstarg)){
+							//make sure that peer is a valid peer
+
+							//connect to peer
+							clientfd= connect_to_port(firstarg,secondarg);
+
+							if(clientfd <=2){
+								return;
+							}
+							else {
+								//make entry of the connection to clientfd
+								make_entry_to_epoll(clientfd,eventfd);
+								make_socket_non_blocking(clientfd);
+
+							}
+						}
+						else{
+							//error handling
+							fprintf(stderr,"\nThe peer specified is not a valid peer \n");
+						}
+					}
+					else{
+						//error handling
+						fprintf(stderr,"Invalid command use help for command help\n");
+					}
+
+					return;
+				}
+
+				else if (!strcmp(token,"TERMINATE")){
+					if (firstarg!=NULL){
+						//termiante the connection with the peer
+
+						char *endptr;
+
+						//convert firstarg to integer used strtol as it handles error better than atoi()
+						int connection_id = strtol(firstarg, &endptr, 10);
+						if ((errno == ERANGE && (connection_id == INT_MAX || connection_id == INT_MIN))
+								|| (errno != 0 && connection_id == 0)) {
+							perror("strtol");
+							return;
+
+						}
+						if (endptr == firstarg) {
+							fprintf(stderr, "No digits were found\n");
+							std::cout<<"Invalid command use help for command help\n";
+							return;
+						}
+
+
+						if(connection_id<=connected_list_idx && connection_id!=1){
+							//if connection is valid and not server then termainte
+							terminate_client(connection_id-1);
+
+						}
+						else{
+							//error handling
+							fprintf(stderr,"Connection id entered is either not valid or you trying to terminate connection with server\n");
+
+						}
+					}
+					else{
+						//error handling
+						fprintf(stderr,"Invalid command use help for command help\n");
+
+
+					}
+					return;
+				}
+
+				else if (!strcmp(token,"LIST")){
+					//print list of peers connected t the client
+					std::cout<<"\nConnected peers are:\n";
+					for (int i=0;i<connected_list_idx;i++){
+						std::cout<<i+1<<"\t" <<connected_list.at(i).hostname<<"\t"<<connected_list.at(i).ipstr<< "\t\t" << connected_list.at(i).port<<"\n";
+
+					}
+					return;
+				}
+
+				else if(!strcmp(token,"EXIT")){
+					//exit
+					fprintf(stderr,"The Client is exiting..\n");
+					exit(0);
+				}
+
+				else {
+					//error handling
+					fprintf(stderr,"Invalid command use help for command help\n");
+
+				}
+			}
+		}
+	}
+}
+
+//terminate the client if terminate command is used
+void client_operations::terminate_client(int i){
+
+	close(connected_list.at(i).file_descriptor);
+	connected_list.at(i)=connected_list.at(--connected_list_idx);
+	fprintf(stderr,"Terminated client at connection id %d\n",i+1);
+
+}
+
+//for the given peer find its port number from the peer_list, so that it can be displayed in LIST command.
+char * client_operations::return_port_from_peer_list(int peer_fd){
+	struct sockaddr_storage addr;
+	socklen_t len = sizeof addr;
+	char hostname[MAXMSGSIZE];
+	char ipstr[INET6_ADDRSTRLEN];
+	char service[20];
+	getpeername(peer_fd, (struct sockaddr*)&addr, &len);
+	if (addr.ss_family == AF_INET) {
+		struct sockaddr_in *s = (struct sockaddr_in *)&addr;
+
+		inet_ntop(AF_INET, &s->sin_addr, ipstr, sizeof ipstr);
+	} else { // AF_INET6
+		struct sockaddr_in6 *s = (struct sockaddr_in6 *)&addr;
+
+		inet_ntop(AF_INET6, &s->sin6_addr, ipstr, sizeof ipstr);
+	}
+
+	getnameinfo((struct sockaddr*)&addr,sizeof addr,hostname,sizeof hostname, service, sizeof service,0);
+
+	for (int i=0;i<peer_idx;i++){
+
+		//for some reason I keep getting some garbage along with hostname for highgate.cse.buffalo.edu e.g. highgate.cse.buffalo.edu1 or !highgate.cse.buffalo.edu
+		//so added this strstr check to see if hostname in peer_list is contained within hostname.
+		char *str=strstr(peer_list.at(i).hostname,hostname);
+
+		if((!strcmp(peer_list.at(i).hostname,hostname)) || str){
+			return peer_list.at(i).port;
+		}
+	}
+	return NULL;
+}
