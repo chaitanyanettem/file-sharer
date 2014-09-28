@@ -465,3 +465,122 @@ void client_operations::send_file_over_socket(int clientfd,const char* filename)
 	fclose(File);
 	make_socket_non_blocking(clientfd);
 }
+
+//Receive the file packet from given client.
+void client_operations::recv_and_write_file(int clientfd, unsigned char* rem_buf){
+	//size of the file
+	int size;
+
+	//count of the bytes received
+	int count;
+
+	//filename
+	char filename[MAXMSGSIZE];
+
+	//file size retried from the packet header
+	char file_size[MAXMSGSIZE];
+
+	//Buffer for the data
+	unsigned char data_buf[PACKET_SIZE];
+
+	//File pointer
+	FILE* File;
+
+	//is it last packet for this file
+	bool last_packet=false;
+
+	//Find time taken for download
+	struct timespec tstart={0,0}, tend={0,0};
+
+	//recieve packet from the client
+	count = recv (clientfd, data_buf, PACKET_SIZE-initial_header_len, 0);
+	data_buf[count-1]='\0';
+
+	//Puts filename from the header to filename
+	split_return((char *)(data_buf),' ',filename);
+
+	//Puts file_size fromt the heade to file_size
+	split_return((char *)(data_buf+strlen(filename)+1),' ',file_size);
+
+	//convert char * size to int size
+	size = strtoull(file_size, NULL, 0);
+
+	if(!strcmp((char *)rem_buf,"File")){
+
+		fprintf(stderr,"\nReceiving file now...\n");
+
+		//if rem_buf is File that means this is first packet for this file
+		//Therefore open file in write mode thus overwriting previous contents.
+
+		File=fopen(filename,"wb");
+
+		//Start the clock
+		clock_gettime(CLOCK_MONOTONIC, &tstart);				//http://stackoverflow.com/questions/16275444/c-how-to-print-time-difference-in-accuracy-of-milliseconds-and-nanoseconds
+		add_st_time(clientfd, (double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec);
+		//everything related to finding time difference I got from here^.
+	}
+	else if(!strcmp((char *)rem_buf,"Pfil")){
+		//Otherwise the packet is any other packet than first packet thus file will be appended.
+		File=fopen(filename,"ab");
+	}
+
+	else if(!strcmp((char *)rem_buf,"Endf")){
+		File=fopen(filename,"ab");
+		last_packet=true;
+	}
+	if(size==-1){
+		//If size is -1(it's part of the protocol) then file was not found
+		fprintf(stderr,"\nFile %s not found at the peer\n",filename);
+		fclose(File);
+		//handle any remaining downloads.
+		handle_rem_downloads(clientfd);
+		return;
+	}
+
+	if(count>0){
+		//if count > 0 then write content to the file
+		fwrite(data_buf+(return_first_occr((char *)data_buf,'\r')+1),1,count-4-strlen(filename)-strlen(file_size),File);
+	}
+
+	if(!last_packet){
+		//if this is not the last packet exit.
+		fclose(File);
+		return;
+	}
+
+	else{
+		//reached here means file download is complete
+		clock_gettime(CLOCK_MONOTONIC, &tend);
+
+		double time=((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -(double)st_time(clientfd);
+
+		//convert file size to bits
+		size=8*size;
+		fprintf(stderr,"\nFile %s received successfully...\n",filename);
+
+		//find speed of transfer
+		double speed= (double)size/time;
+
+		if (speed< 1024)
+		{
+			//speed in bps
+			fprintf(stderr,"\nThe file downloaded at rate of %.2fbits per second...\n",speed);
+		}
+		else if (speed < 1048000)
+		{
+			//speed in Kbps
+			speed=(double) speed/1024;
+			fprintf(stderr,"\nThe file downloaded at rate of %.2fKbps...\n",speed);
+		}
+		else {
+			//speed in Mbps
+			speed=(double) speed/(1024*1024);
+			fprintf(stderr,"\nThe file downloaded at rate of %.2fMbps...\n",speed);
+		}
+
+		fclose (File);
+		//handle any remaining downloads
+		handle_rem_downloads(clientfd);
+		return;
+	}
+}
