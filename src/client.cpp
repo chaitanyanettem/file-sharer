@@ -1072,3 +1072,81 @@ char * client_operations::return_port_from_peer_list(int peer_fd){
 	}
 	return NULL;
 }
+
+//wait for event
+//similar to server function
+void inline client_operations::wait_for_event(int eventfd, struct epoll_event* event_array, int sfd){
+	struct sockaddr_storage in_addr;
+	char port_arr[20];
+	char *port=port_arr;
+	while (1)
+	{
+		int n, i;
+		int infd;
+		n = epoll_wait (eventfd, event_array, maxPeers, -1);
+		for (i = 0; i < n; i++)
+		{
+
+			if(event_array[i].events & EPOLLRDHUP){
+				//***********
+				char hostname [265];
+				strcpy(hostname,remove_from_connected_list(event_array[i].data.fd,hostname));
+
+				fprintf (stderr,"\nThe client %s closed connection",hostname);
+				continue;
+
+			}
+			else if ((event_array[i].events & EPOLLERR) || (event_array[i].events & EPOLLHUP) || (!(event_array[i].events & EPOLLIN)))
+			{
+				/* An error has occured on this fd, or the socket is not
+			                 ready for reading (why were we notified then?) */
+				fprintf (stderr, "epoll error\n");
+				close (event_array[i].data.fd);
+				continue;
+			}
+			else if (sfd == event_array[i].data.fd)
+			{
+				/* We have a notification on the listening socket, which
+			                 means one or more incoming connections. */
+				socklen_t in_len;
+
+				in_len = sizeof in_addr;
+				infd = accept (sfd, (struct sockaddr *)&in_addr, &in_len);
+				if (infd == -1)
+				{
+					perror ("accept");
+					continue;
+				}
+				port=return_port_from_peer_list(infd);
+				if(!port){
+					fprintf (stderr, "Invalid connection rejected\n");
+					close(infd);
+					continue;
+				}
+				// add peer to connection_list
+				add_connection_list(infd,port);
+
+				//make entries
+				make_socket_non_blocking(infd);
+				make_entry_to_epoll(infd,eventfd);
+				continue;
+
+			}
+
+			else if (event_array[i].data.fd==0){
+				//handle stdin input
+				recv_stdin_client(eventfd);
+
+			}
+			else
+			{
+				/* We have data on the fd waiting to be read.*/
+
+				//handle the data from peers and server.
+				recv_requests_client(event_array[i].data.fd);
+
+			}
+		}
+
+	}
+}
